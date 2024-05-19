@@ -127,7 +127,7 @@ def mysql_container(docker_ip, docker_services):
 @pytest.fixture
 def db_session(request, mysql_container):
     # Few tests require a mysql database (mainly rules)
-    if request and hasattr(request, "param") and request.param == "mysql":
+    if request and hasattr(request, "param") and request.param.get("db") == "mysql":
         db_connection_string = "mysql+pymysql://root:keep@localhost:3306/keep"
         mock_engine = create_engine(db_connection_string)
     else:
@@ -152,45 +152,6 @@ def db_session(request, mysql_container):
         Tenant(id=SINGLE_TENANT_UUID, name="test-tenant", created_by="tests@keephq.dev")
     ]
     session.add_all(tenant_data)
-    session.commit()
-    # 2. Create some workflows
-    workflow_data = [
-        Workflow(
-            id="test-id-1",
-            name="test-name-1",
-            tenant_id=SINGLE_TENANT_UUID,
-            description="test workflow",
-            created_by="test@keephq.dev",
-            interval=0,
-            workflow_raw="test workflow raw",
-        ),
-        Workflow(
-            id="test-id-2",
-            name="test-name-2",
-            tenant_id=SINGLE_TENANT_UUID,
-            description="test workflow",
-            created_by="test@keephq.dev",
-            interval=0,
-            workflow_raw="test workflow raw",
-        ),
-        WorkflowExecution(
-            id="test-execution-id-1",
-            workflow_id="mock_alert",
-            tenant_id=SINGLE_TENANT_UUID,
-            triggered_by="keep-test",
-            status="success",
-            execution_number=1,
-            results={},
-        ),
-        WorkflowToAlertExecution(
-            id=1,
-            workflow_execution_id="test-execution-id-1",
-            alert_fingerprint="mock_alert",
-            event_id="mock_event_id",
-        ),
-        # Add more data as needed
-    ]
-    session.add_all(workflow_data)
     session.commit()
 
     with patch("keep.api.core.db.engine", mock_engine):

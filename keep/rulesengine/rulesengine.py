@@ -354,14 +354,35 @@ class RulesEngine:
         return modified_expression
 
     @staticmethod
-    def filter_alerts_cel_sql(tenant_id: str, cel_sql: str):
-        sql_where = cel_sql.get("sql")
+    def filter_alerts_sql(tenant_id: str, sql_dict: dict):
+        # TODO: we currently do not support the SQL side of "in"
+        # TODO: e.g. "source in ('sentry', 'grafana')"
+        # TODO: support the other side
+        # TODO: e.g. "'sentry' in source"
+        sql_where = sql_dict.get("sql")
         if not sql_where:
             return []
-        for param_key, param_value in cel_sql.get("params", {}).items():
+        # construct the where query
+        params = sql_dict.get("params", {})
+        params_with_type = {}
+        for param_key, param_value in params.items():
+            # if its the first occurrence of the param, let's check if it's a list
+            # TODO: think how to (and if) support the case where lastName_1 and lastName_2 are part of the same "in" clause but lastName_3 is different usage and its not a list
+            #       example: https://react-querybuilder.js.org/demo#addRuleToNewGroups=false&autoSelectField=true&autoSelectOperator=true&debugMode=false&disabled=false&enableDragAndDrop=false&independentCombinators=false&justifiedLayout=false&listsAsArrays=false&parseNumbers=true&resetOnFieldChange=true&resetOnOperatorChange=false&showBranches=false&showCloneButtons=false&showCombinatorsBetweenRules=false&showLockButtons=false&showNotToggle=false&showShiftActions=false&validateQuery=false
+            if param_key.endswith("_1"):
+                # look for "in ("
+                in_param = f"in (:{param_key}"
+                param_sanitized_key = "_".join(param_key.split("_")[0:-1])
+                if in_param in sql_where:
+                    params_with_type[param_sanitized_key] = list
+                else:
+                    params_with_type[param_sanitized_key] = str
             sql_where = sql_where.replace(f":{param_key}", f"'{param_value}'")
+
         filtered_alerts = get_alerts_by_cel_sql(
-            tenant_id=tenant_id, cel_sql_where_query=sql_where
+            tenant_id=tenant_id,
+            sql_where_query=sql_where,
+            sql_where_params=params_with_type,
         )
         return filtered_alerts
 

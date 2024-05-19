@@ -50,9 +50,7 @@ def get_presets(
         # filter the alerts based on the search query
         start = time.time()
         logger.info("Filtering alerts", extra={"preset_id": preset.id})
-        filtered_alerts = RulesEngine.filter_alerts_cel_sql(
-            tenant_id, preset_dto.sql_query
-        )
+        filtered_alerts = RulesEngine.filter_alerts_sql(tenant_id, preset_dto.sql_query)
         filtered_alerts = convert_db_alerts_to_dto_alerts(filtered_alerts)
         logger.info(
             "Filtered alerts",

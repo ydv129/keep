@@ -78,27 +78,57 @@ def _create_valid_event(d):
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["sentry"], "severity": "critical"},
-                {"source": ["grafana"], "severity": "critical"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry"], "severity": "critical"},
+                    {"source": ["grafana"], "severity": "info"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_search_sanity(db_session, setup_alerts):
-    timeframe_in_days = 3600 / 86400  # last hour
-    search_query = '(source == "sentry")'
-    alerts = get_alerts_with_filters(
-        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
-    )
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
+    # most basic filtering
+    search_query = {
+        "sql": "(severity = :severity_1)",
+        "params": {
+            "severity_1": "critical",
+        },
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+
+
+@pytest.mark.parametrize(
+    "setup_alerts, db_session",
+    [
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry", "datadog"], "severity": "critical"},
+                    {"source": ["grafana"], "severity": "info"},
+                ]
+            },
+            {"db": "mysql"},
+        )
+    ],
+    indirect=True,
+)
+def test_search_sanity_source(db_session, setup_alerts):
+    # most basic filtering
+    search_query = {
+        "sql": "(source in (:source_1))",
+        "params": {
+            "source_1": "grafana",
+        },
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
 
 
 @pytest.mark.parametrize(

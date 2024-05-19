@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import random
-import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple
@@ -884,14 +883,18 @@ def __get_mssql_wrapped_subquery_for_filtering(
 
 def __get_mysql_wrapped_subquery_for_filtering(
     fields,
+    sql_where_params,
     cel_sql_where_query_alerts,
     cel_sql_where_query_enrichments,
 ):
+    # TODO: we use [0], think how to support arrays
     alert_fields = ", ".join(
-        f"alert_{field} VARCHAR(1024) PATH '$.{field}'" for field in fields
+        f"alert_{field} VARCHAR(1024) PATH '$.{field}{'[0]' if sql_where_params.get(field) == list else ''}'"
+        for field in fields
     )
     enrichment_fields = ", ".join(
-        f"enrichment_{field} VARCHAR(1024) PATH '$.{field}'" for field in fields
+        f"enrichment_{field} VARCHAR(1024) PATH '$.{field}{'[0]' if sql_where_params.get(field) == list else ''}'"
+        for field in fields
     )
     subquery = text(
         f"""
@@ -902,7 +905,7 @@ def __get_mysql_wrapped_subquery_for_filtering(
     JSON_TABLE(a.event, '$' COLUMNS(
         {alert_fields}
     )) AS alerts,
-    JSON_TABLE(ae.enrichments, '$' COLUMNS(
+    JSON_TABLE(COALESCE(ae.enrichments,'{{}}'), '$' COLUMNS(
         {enrichment_fields}
     )) AS enrichments
     WHERE (({cel_sql_where_query_alerts}) OR ({cel_sql_where_query_enrichments}))
@@ -922,19 +925,18 @@ def __get_mysql_wrapped_subquery_for_filtering(
     return wrapped_subquery
 
 
-def get_alerts_by_cel_sql(tenant_id, cel_sql_where_query) -> list[Alert]:
-    # This doesn't work perfectly, refine it?
-    field_pattern = r"\b([\w\.]+)\s*(?=\s*(?:like|in|between|!=|=|>|<))"
-    fields = set(re.findall(field_pattern, cel_sql_where_query, re.IGNORECASE))
+def get_alerts_by_cel_sql(tenant_id, sql_where_query, sql_where_params) -> list[Alert]:
+    # extract only the fields
+    fields = sql_where_params.keys()
 
-    cel_sql_where_query_alerts = cel_sql_where_query
-    cel_sql_where_query_enrichments = cel_sql_where_query
+    sql_where_query_alerts = sql_where_query
+    sql_where_query_enrichments = sql_where_query
     for field in fields:
         escaped_field = field.replace(".", "_")
-        cel_sql_where_query_alerts = cel_sql_where_query_alerts.replace(
+        sql_where_query_alerts = sql_where_query.replace(
             field, f"alert_{escaped_field}"
         )
-        cel_sql_where_query_enrichments = cel_sql_where_query_enrichments.replace(
+        sql_where_query_enrichments = sql_where_query.replace(
             field, f"enrichment_{escaped_field}"
         )
 
@@ -942,16 +944,17 @@ def get_alerts_by_cel_sql(tenant_id, cel_sql_where_query) -> list[Alert]:
         if session.bind.dialect.name == "mysql":
             wrapped_subquery = __get_mysql_wrapped_subquery_for_filtering(
                 fields,
-                cel_sql_where_query_alerts,
-                cel_sql_where_query_enrichments,
+                sql_where_params,
+                sql_where_query_alerts,
+                sql_where_query_enrichments,
             )
         elif session.bind.dialect.name == "sqlite":
             wrapped_subquery = __get_sqlite_wrapped_subquery_for_filtering(
-                fields, cel_sql_where_query_alerts, cel_sql_where_query_enrichments
+                fields, sql_where_query_alerts, sql_where_query_enrichments
             )
         elif session.bind.dialect.name == "mssql":
             wrapped_subquery = __get_mssql_wrapped_subquery_for_filtering(
-                fields, cel_sql_where_query_alerts, cel_sql_where_query_enrichments
+                fields, sql_where_query_alerts, sql_where_query_enrichments
             )
         else:
             return []
