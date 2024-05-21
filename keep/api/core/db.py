@@ -882,35 +882,55 @@ def __get_mssql_wrapped_subquery_for_filtering(
 
 
 def __get_mysql_wrapped_subquery_for_filtering(
-    fields,
-    sql_where_params,
-    cel_sql_where_query_alerts,
-    cel_sql_where_query_enrichments,
+    fields, sql_where_params, sql_where_query
 ):
     # TODO: we use [0], think how to support arrays
+    # Generate JSON_TABLE columns for direct and array access
     alert_fields = ", ".join(
-        f"alert_{field} VARCHAR(1024) PATH '$.{field}{'[0]' if sql_where_params.get(field) == list else ''}'"
+        f"alert_{field} VARCHAR(1024) PATH '$.{field}', "
+        f"alert_{field}_array VARCHAR(1024) PATH '$.{field}[0]'"
         for field in fields
     )
+
     enrichment_fields = ", ".join(
-        f"enrichment_{field} VARCHAR(1024) PATH '$.{field}{'[0]' if sql_where_params.get(field) == list else ''}'"
+        f"enrichment_{field} VARCHAR(1024) PATH '$.{field}', "
+        f"enrichment_{field}_array VARCHAR(1024) PATH '$.{field}[0]'"
         for field in fields
     )
+
+    # COALESCE expressions for the WHERE clause
+    # default_value so that COALESCE doesn't return NULL
+    coalesce_conditions = ",".join(
+        f"COALESCE(enrichments.enrichment_{field}, enrichments.enrichment_{field}_array, alerts.alert_{field}, alerts.alert_{field}_array, 'default_value') as {field}"
+        for field in fields
+    )
+
     subquery = text(
         f"""
-    (SELECT a.fingerprint as fp, MAX(a.timestamp) as max_t
-    FROM alert as a
-    LEFT JOIN alertenrichment ae
-    ON a.fingerprint = ae.alert_fingerprint,
-    JSON_TABLE(a.event, '$' COLUMNS(
-        {alert_fields}
-    )) AS alerts,
-    JSON_TABLE(COALESCE(ae.enrichments,'{{}}'), '$' COLUMNS(
-        {enrichment_fields}
-    )) AS enrichments
-    WHERE (({cel_sql_where_query_alerts}) OR ({cel_sql_where_query_enrichments}))
-    GROUP BY a.fingerprint) as subq
-"""
+        (
+            SELECT abc.fingerprint as fp, MAX(abc.timestamp) as max_t
+            FROM (
+                SELECT {coalesce_conditions}, a.fingerprint, a.timestamp
+                FROM alert a
+                LEFT JOIN alertenrichment ae ON a.fingerprint = ae.alert_fingerprint
+                LEFT JOIN JSON_TABLE(
+                    a.event,
+                    '$' COLUMNS (
+                        {alert_fields}
+                    )
+                ) AS alerts ON TRUE
+                LEFT JOIN JSON_TABLE(
+                    COALESCE(ae.enrichments, '{{}}'),
+                    '$' COLUMNS (
+                        {enrichment_fields}
+                    )
+                ) AS enrichments ON TRUE
+            ) AS abc
+            WHERE
+                ({sql_where_query})
+            GROUP BY abc.fingerprint
+        ) as subq
+        """
     )
     wrapped_subquery = (
         select(
@@ -933,10 +953,10 @@ def get_alerts_by_cel_sql(tenant_id, sql_where_query, sql_where_params) -> list[
     sql_where_query_enrichments = sql_where_query
     for field in fields:
         escaped_field = field.replace(".", "_")
-        sql_where_query_alerts = sql_where_query.replace(
+        sql_where_query_alerts = sql_where_query_alerts.replace(
             field, f"alert_{escaped_field}"
         )
-        sql_where_query_enrichments = sql_where_query.replace(
+        sql_where_query_enrichments = sql_where_query_enrichments.replace(
             field, f"enrichment_{escaped_field}"
         )
 
@@ -945,8 +965,7 @@ def get_alerts_by_cel_sql(tenant_id, sql_where_query, sql_where_params) -> list[
             wrapped_subquery = __get_mysql_wrapped_subquery_for_filtering(
                 fields,
                 sql_where_params,
-                sql_where_query_alerts,
-                sql_where_query_enrichments,
+                sql_where_query,
             )
         elif session.bind.dialect.name == "sqlite":
             wrapped_subquery = __get_sqlite_wrapped_subquery_for_filtering(

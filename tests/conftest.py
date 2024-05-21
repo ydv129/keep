@@ -68,6 +68,17 @@ def docker_services(
 
     # Else, start the docker services
     try:
+        import inspect
+
+        stack = inspect.stack()
+        # this is a hack to support more than one docker-compose file
+        for frame in stack:
+            if frame.function == "db_session":
+                db_type = frame.frame.f_locals["db_type"]
+                docker_compose_file = docker_compose_file.replace(
+                    "docker-compose.yml", f"docker-compose-{db_type}.yml"
+                )
+                break
         with get_docker_services(
             docker_compose_command,
             docker_compose_file,
@@ -115,7 +126,7 @@ def mysql_container(docker_ip, docker_services):
                 "127.0.0.1", 3306, "root", "keep", "keep"
             ),
         )
-        yield
+        yield "mysql+pymysql://root:keep@localhost:3306/keep"
     except Exception:
         print("Exception occurred while waiting for MySQL to be responsive")
     finally:
@@ -124,12 +135,55 @@ def mysql_container(docker_ip, docker_services):
             docker_services.down()
 
 
+def is_mssql_responsive(host, port, user, password, database):
+    import pyodbc
+
+    try:
+        conn = pyodbc.connect(
+            f"DRIVER=FreeTDS;SERVER={host};PORT={port};DATABASE={database};UID={user};PWD={password}"
+        )
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchall()
+        return True
+    except Exception:
+        print("MSSQL still not up")
+        pass
+
+    return False
+
+
+@pytest.fixture(scope="session")
+def mssql_container(docker_ip, docker_services):
+    try:
+        if os.getenv("SKIP_DOCKER") or os.getenv("GITHUB_ACTIONS") == "true":
+            print("Running in Github Actions or SKIP_DOCKER is set, skipping mysql")
+            yield
+            return
+        docker_services.wait_until_responsive(
+            timeout=60.0,
+            pause=0.1,
+            check=lambda: is_mssql_responsive(
+                "127.0.0.1", 1433, "sa", "VeryStrongPassword1", "keepdb"
+            ),
+        )
+        yield "mssql+pyodbc://sa:VeryStrongPassword1#@localhost:1433/keepdb?driver=FreeTDS"
+    except Exception:
+        print("Exception occurred while waiting for MySQL to be responsive")
+    finally:
+        print("Tearing down MSSQL")
+        if docker_services:
+            docker_services.down()
+
+
 @pytest.fixture
-def db_session(request, mysql_container):
-    # Few tests require a mysql database (mainly rules)
-    if request and hasattr(request, "param") and request.param.get("db") == "mysql":
-        db_connection_string = "mysql+pymysql://root:keep@localhost:3306/keep"
+def db_session(request):
+    # mysql/mssql
+    if request and hasattr(request, "param") and "db" in request.param:
+        db_type = request.param.get("db")
+        db_connection_string = request.getfixturevalue(f"{db_type}_container")
         mock_engine = create_engine(db_connection_string)
+    # sqlite
     else:
         db_connection_string = "sqlite:///:memory:"
         mock_engine = create_engine(
@@ -137,6 +191,7 @@ def db_session(request, mysql_container):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+
     SQLModel.metadata.create_all(mock_engine)
 
     # Mock the environment variables so db.py will use it

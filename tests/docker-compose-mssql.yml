@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  mssql-database:
+    image: mcr.microsoft.com/mssql/server:2017-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=VeryStrongPassword1#
+    ports:
+      - "0.0.0.0:1433:1433"
+    hostname: sql1
+    platform: linux/amd64
+    volumes:
+      - mssql-data:/var/opt/mssql
+
+volumes:
+  mssql-data:

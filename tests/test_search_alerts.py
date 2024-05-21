@@ -102,6 +102,7 @@ def test_search_sanity(db_session, setup_alerts):
     }
     alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
     assert len(alerts) == 1
+    assert alerts[0].event.get("severity") == "critical"
 
 
 @pytest.mark.parametrize(
@@ -129,125 +130,143 @@ def test_search_sanity_source(db_session, setup_alerts):
     }
     alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
     assert len(alerts) == 1
+    assert alerts[0].event.get("source") == ["grafana"]
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["sentry"], "severity": "critical"},
-                {"source": ["grafana"], "severity": "critical"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry"], "severity": "critical"},
+                    {"source": ["grafana"], "severity": "critical"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_search_sanity2(db_session, setup_alerts):
-    timeframe_in_days = 3600 / 86400  # last hour
-    search_query = '(source == "sentry" || source == "grafana")'
-    alerts = get_alerts_with_filters(
-        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
-    )
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 2
+    search_query = {
+        "sql": "(source = :source_1 OR source = :source_2)",
+        "params": {
+            "source_1": "sentry",
+            "source_2": "grafana",
+        },
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 2
+    assert alerts[0].event.get("source") == ["sentry"]
+    assert alerts[1].event.get("source") == ["grafana"]
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["sentry"], "severity": "critical"},
-                {"source": ["grafana"], "severity": "critical"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry"], "severity": "critical"},
+                    {"source": ["grafana"], "severity": "critical"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_search_sanity_3(db_session, setup_alerts):
-    timeframe_in_days = 3600 / 86400  # last hour
-    search_query = '!(source == "sentry" || source == "grafana")'
-    alerts = get_alerts_with_filters(
-        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
-    )
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 0
+    search_query = {
+        "sql": "NOT ((source = :source_1 or source = :source_2))",
+        "params": {"source_1": "sentry", "source_2": "grafana"},
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 0
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["sentry"], "severity": "critical"},
-                {"source": ["grafana"], "severity": "critical"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry"], "severity": "critical"},
+                    {"source": ["grafana"], "severity": "critical"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_search_sanity_4(db_session, setup_alerts):
-    timeframe_in_days = 3600 / 86400  # last hour
     # mark alerts as dismissed
     enrich_alert(
         SINGLE_TENANT_UUID,
         fingerprint="test-1",
         enrichments={"dismissed": True},
     )
-    search_query = '((source == "sentry" || source == "grafana") && !dismissed)'
-    alerts = get_alerts_with_filters(
-        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
-    )
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
+    search_query = {
+        "sql": "((source = :source_1 or source = :source_2) and dismissed != :dismissed_1)",
+        "params": {"source_1": "sentry", "source_2": "grafana", "dismissed_1": "true"},
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    # the test-1 represents the sentry
+    assert alerts[0].event.get("fingerprint") == "test-0"
+
+    # now we will search for dismissed alerts
+    search_query = {
+        "sql": "((source = :source_1 or source = :source_2) and dismissed = :dismissed_1)",
+        "params": {"source_1": "sentry", "source_2": "grafana", "dismissed_1": "true"},
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    # the test-1 represents the sentry
+    assert alerts[0].event.get("fingerprint") == "test-1"
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["sentry"], "severity": "critical"},
-                {
-                    "source": ["grafana"],
-                    "severity": "critical",
-                    "labels": {
-                        "some_label": "some_value",
-                        "another_label": "another_value",
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry"], "severity": "critical"},
+                    {
+                        "source": ["grafana"],
+                        "severity": "critical",
+                        "labels": {
+                            "some_label": "some_value",
+                            "another_label": "another_value",
+                        },
                     },
-                },
-                {
-                    "source": ["datadog"],
-                    "severity": "critical",
-                    "labels": {
-                        "some_label": "some_value",
-                        "another_label": "another_value",
+                    {
+                        "source": ["datadog"],
+                        "severity": "critical",
+                        "labels": {
+                            "some_label": "some_value",
+                            "another_label": "another_value",
+                        },
                     },
-                },
-            ]
-        }
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_search_sanity_5(db_session, setup_alerts):
-    timeframe_in_days = 3600 / 86400  # last hour
-    search_query = '(labels.some_label == "some_value")'
-    alerts = get_alerts_with_filters(
-        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
-    )
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 3
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 2
-    assert filtered_alerts[0].fingerprint == "test-2"
-    assert filtered_alerts[1].fingerprint == "test-1"
+    search_query = {
+        "sql": "(labels.some_label = :labels.some_label_1)",
+        "params": {"labels.some_label_1": "some_value"},
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 2
+    assert alerts[0].fingerprint == "test-2"
+    assert alerts[1].fingerprint == "test-1"
 
 
 @pytest.mark.parametrize(
