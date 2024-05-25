@@ -354,6 +354,15 @@ class RulesEngine:
         return modified_expression
 
     @staticmethod
+    def extract_params(sql_string):
+        # Regular expression to match parameters before "is null" or "is not null"
+        pattern = re.compile(r"(\w+)\s+is\s+(?:not\s+)?null", re.IGNORECASE)
+
+        # Find all matches in the given SQL string
+        matches = pattern.findall(sql_string)
+        return matches
+
+    @staticmethod
     def filter_alerts_sql(tenant_id: str, sql_dict: dict):
         # TODO: we currently do not support the SQL side of "in"
         # TODO: e.g. "source in ('sentry', 'grafana')"
@@ -364,6 +373,11 @@ class RulesEngine:
             return []
         # construct the where query
         params = sql_dict.get("params", {})
+
+        # patch "is null" and "is not null" since they are not in the params:
+        null_params = RulesEngine.extract_params(sql_where)
+        params.update({f"{param}_1": None for param in null_params})
+
         params_with_type = {}
         for param_key, param_value in params.items():
             # if its the first occurrence of the param, let's check if it's a list
@@ -377,7 +391,10 @@ class RulesEngine:
                     params_with_type[param_sanitized_key] = list
                 else:
                     params_with_type[param_sanitized_key] = str
-            sql_where = sql_where.replace(f":{param_key}", f"'{param_value}'")
+            if isinstance(param_value, int) or isinstance(param_value, float):
+                sql_where = sql_where.replace(f":{param_key}", f"{param_value}")
+            else:
+                sql_where = sql_where.replace(f":{param_key}", f"'{param_value}'")
 
         filtered_alerts = get_alerts_by_cel_sql(
             tenant_id=tenant_id,

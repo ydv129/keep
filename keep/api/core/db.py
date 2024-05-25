@@ -887,21 +887,21 @@ def __get_mysql_wrapped_subquery_for_filtering(
     # TODO: we use [0], think how to support arrays
     # Generate JSON_TABLE columns for direct and array access
     alert_fields = ", ".join(
-        f"alert_{field} VARCHAR(1024) PATH '$.{field}', "
-        f"alert_{field}_array VARCHAR(1024) PATH '$.{field}[0]'"
+        f"alert_{field.replace('.', '_')} VARCHAR(1024) PATH '$.{field}', "
+        f"alert_{field.replace('.', '_')}_array VARCHAR(1024) PATH '$.{field}[0]'"
         for field in fields
     )
 
     enrichment_fields = ", ".join(
-        f"enrichment_{field} VARCHAR(1024) PATH '$.{field}', "
-        f"enrichment_{field}_array VARCHAR(1024) PATH '$.{field}[0]'"
+        f"enrichment_{field.replace('.', '_')} VARCHAR(1024) PATH '$.{field}', "
+        f"enrichment_{field.replace('.', '_')}_array VARCHAR(1024) PATH '$.{field}[0]'"
         for field in fields
     )
 
     # COALESCE expressions for the WHERE clause
     # default_value so that COALESCE doesn't return NULL
     coalesce_conditions = ",".join(
-        f"COALESCE(enrichments.enrichment_{field}, enrichments.enrichment_{field}_array, alerts.alert_{field}, alerts.alert_{field}_array, 'default_value') as {field}"
+        f"COALESCE(enrichments.enrichment_{field.replace('.', '_')}, enrichments.enrichment_{field.replace('.', '_')}_array, alerts.alert_{field.replace('.', '_')}, alerts.alert_{field.replace('.', '_')}_array, null) as {field.replace('.', '_')}"
         for field in fields
     )
 
@@ -959,6 +959,7 @@ def get_alerts_by_cel_sql(tenant_id, sql_where_query, sql_where_params) -> list[
         sql_where_query_enrichments = sql_where_query_enrichments.replace(
             field, f"enrichment_{escaped_field}"
         )
+        sql_where_query = sql_where_query.replace(field, f"{escaped_field}")
 
     with Session(engine) as session:
         if session.bind.dialect.name == "mysql":

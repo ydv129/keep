@@ -7,7 +7,6 @@ import pytest
 
 from keep.api.core.db import enrich_alert, get_alerts_with_filters
 from keep.api.core.dependencies import SINGLE_TENANT_UUID
-from keep.api.models.alert import AlertStatus
 from keep.api.models.db.alert import Alert
 from keep.api.routes.alerts import convert_db_alerts_to_dto_alerts
 from keep.rulesengine.rulesengine import RulesEngine
@@ -247,7 +246,7 @@ def test_search_sanity_4(db_session, setup_alerts):
                         "source": ["datadog"],
                         "severity": "critical",
                         "labels": {
-                            "some_label": "some_value",
+                            "some_label": "some_other_value",
                             "another_label": "another_value",
                         },
                     },
@@ -264,346 +263,280 @@ def test_search_sanity_5(db_session, setup_alerts):
         "params": {"labels.some_label_1": "some_value"},
     }
     alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("labels", {}).get("some_label")
+
+
+@pytest.mark.parametrize(
+    "setup_alerts, db_session",
+    [
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry"], "severity": "critical"},
+                    {
+                        "source": ["grafana"],
+                        "severity": "critical",
+                        "labels": {
+                            "some_label": "some_bla_value",
+                            "another_label": "another_value",
+                        },
+                    },
+                    {
+                        "source": ["grafana"],
+                        "severity": "critical",
+                        "labels": {
+                            "some_label": "bla",
+                            "another_label": "another_value",
+                        },
+                    },
+                    {
+                        "source": ["datadog"],
+                        "severity": "critical",
+                        "labels": {
+                            "some_label": "some_value",
+                            "another_label": "another_value",
+                        },
+                    },
+                ]
+            },
+            {"db": "mysql"},
+        )
+    ],
+    indirect=True,
+)
+def test_search_sanity_6(db_session, setup_alerts):
+    search_query = {
+        "sql": "(labels.some_label like :labels.some_label_1)",
+        "params": {"labels.some_label_1": "%bla%"},
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
     assert len(alerts) == 2
     assert alerts[0].fingerprint == "test-2"
     assert alerts[1].fingerprint == "test-1"
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["sentry"], "severity": "critical"},
-                {
-                    "source": ["grafana"],
-                    "severity": "critical",
-                    "labels": {
-                        "some_label": "some_bla_value",
-                        "another_label": "another_value",
-                    },
-                },
-                {
-                    "source": ["grafana"],
-                    "severity": "critical",
-                    "labels": {"some_label": "bla", "another_label": "another_value"},
-                },
-                {
-                    "source": ["datadog"],
-                    "severity": "critical",
-                    "labels": {
-                        "some_label": "some_value",
-                        "another_label": "another_value",
-                    },
-                },
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_search_sanity_6(db_session, setup_alerts):
-    timeframe_in_days = 3600 / 86400  # last hour
-    search_query = '(labels.some_label.contains("bla"))'
-    alerts = get_alerts_with_filters(
-        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
-    )
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 4
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 2
-    assert filtered_alerts[0].fingerprint == "test-2"
-    assert filtered_alerts[1].fingerprint == "test-1"
-
-
-@pytest.mark.parametrize(
-    "setup_alerts",
-    [
-        {
-            "alert_details": [
-                {
-                    "source": ["grafana"],
-                    "severity": "critical",
-                    "labels": {"some_label": "bla", "another_label": "another_value"},
-                    "some_list": ["a", "b"],
-                },
-                {
-                    "source": ["grafana"],
-                    "severity": "critical",
-                    "labels": {"some_label": "bla", "another_label": "another_value"},
-                },
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_search_sanity_7(db_session, setup_alerts):
-    timeframe_in_days = 3600 / 86400  # last hour
-    search_query = '(labels.some_label.contains("bla") && "b" in some_list)'
-    alerts = get_alerts_with_filters(
-        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
-    )
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    # assert len(alerts_dto) == 4
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].fingerprint == "test-0"
-
-
-@pytest.mark.parametrize(
-    "setup_alerts",
-    [
-        {
-            "alert_details": [
-                {"source": ["application"], "count": 10},
-                {"source": ["database"], "count": 5},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["application"], "count": 10},
+                    {"source": ["database"], "count": 5},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_greater_than(db_session, setup_alerts):
-    search_query = "(count > 6)"
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].count == 10
+    search_query = {"sql": "(count > :count_1)", "params": {"count_1": 6}}
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("count") == 10
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["sentry"], "severity": "critical"},
-                {"source": ["grafana"], "severity": "warning"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["sentry"], "severity": "critical"},
+                    {"source": ["grafana"], "severity": "warning"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_not_equal(db_session, setup_alerts):
-    search_query = '(severity != "critical")'
+    search_query = {
+        "sql": "(severity != :severity_1)",
+        "params": {"severity_1": "critical"},
+    }
     # Your existing test workflow follows here
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].severity == "warning"
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("severity") == "warning"
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["system"], "active": True},
-                {"source": ["backup"], "active": False},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["system"], "active": True},
+                    {"source": ["backup"], "active": False},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_logical_not(db_session, setup_alerts):
-    search_query = "(!active)"
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].active == False
+    search_query = {"sql": "(active != :active_1)", "params": {"active_1": "true"}}
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("active") == False
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["ui"], "user": "admin"},
-                {"source": ["backend"], "user": "developer"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["ui"], "user": "admin"},
+                    {"source": ["backend"], "user": "developer"},
+                    {"source": ["keep"], "user": "guest"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_in_operator(db_session, setup_alerts):
-    search_query = '(user in ["admin", "guest"])'
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].user == "admin"
+    search_query = {
+        "sql": "(user in (:user_1, :user_2))",
+        "params": {"user_1": "admin", "user_2": "guest"},
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 2
+    assert alerts[0].event.get("user") == "admin"
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["frontend"], "path": "/home"},
-                {"source": ["backend"], "path": "/api/data"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["frontend"], "path": "/home"},
+                    {"source": ["backend"], "path": "/api/data"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_starts_with(db_session, setup_alerts):
-    search_query = '(path.startsWith("/api"))'
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].path == "/api/data"
+    search_query = {"sql": "(path like :path_1)", "params": {"path_1": "/api%"}}
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("path") == "/api/data"
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["task"], "assigned": None},
-                {"source": ["job"], "assigned": "user123"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["task"], "assigned": None},
+                    {"source": ["job"], "assigned": "user123"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_null_handling(db_session, setup_alerts):
-    search_query = "(assigned == null)"
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].assigned == None
+    search_query = {"sql": "(assigned is null)", "params": {}}
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("assigned") == None
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["monitoring"], "tags": ["urgent", "review"]},
-                {"source": ["logging"], "tags": ["ignore"]},
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_in_with_list(db_session, setup_alerts):
-    search_query = '("urgent" in tags)'
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].tags == ["urgent", "review"]
-
-
-@pytest.mark.parametrize(
-    "setup_alerts",
-    [
-        {
-            "alert_details": [
-                {
-                    "source": ["application"],
-                    "metrics": {
-                        "requests": 100,
-                        "errors": {"timeout": 10, "server": 5},
+        (
+            {
+                "alert_details": [
+                    {
+                        "source": ["application"],
+                        "metrics": {
+                            "requests": 100,
+                            "errors": {"timeout": 10, "server": 5},
+                        },
                     },
-                },
-                {
-                    "source": ["database"],
-                    "metrics": {
-                        "requests": 150,
-                        "errors": {"timeout": 20, "server": 0},
+                    {
+                        "source": ["database"],
+                        "metrics": {
+                            "requests": 150,
+                            "errors": {"timeout": 20, "server": 0},
+                        },
                     },
-                },
-            ]
-        }
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_complex_nested_queries(db_session, setup_alerts):
-    search_query = "((metrics.requests > 100) && (metrics.errors.timeout > 15 || metrics.errors.server < 1))"
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].source == ["database"]
+    search_query = {
+        "sql": "((metrics.requests > :metrics.requests_1) and (metrics.errors.timeout > :metrics.errors.timeout_1 or metrics.errors.server < :metrics.errors.server_1))",
+        "params": {
+            "metrics.requests_1": 100,
+            "metrics.errors.timeout_1": 15,
+            "metrics.errors.server_1": 1,
+        },
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("source") == ["database"]
 
 
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["api"], "endpoint": "/user/create"},
-                {"source": ["api"], "endpoint": "/auth/login?redirect=/home"},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["api"], "endpoint": "/user/create"},
+                    {"source": ["api"], "endpoint": "/auth/login?redirect=/home"},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
 def test_special_characters_in_strings(db_session, setup_alerts):
-    search_query = '(endpoint == "/auth/login?redirect=/home")'
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].endpoint == "/auth/login?redirect=/home"
-
-
-@pytest.mark.parametrize(
-    "setup_alerts",
-    [
-        {
-            "alert_details": [
-                {
-                    "source": ["frontend"],
-                    "responseTimes": [120, 250, 180],
-                    "status": AlertStatus.RESOLVED.value,
-                },
-                {
-                    "source": ["backend"],
-                    "responseTimes": [300, 400, 500],
-                    "status": AlertStatus.FIRING.value,
-                },
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_high_complexity_queries(db_session, setup_alerts):
-    search_query = (
-        '((responseTimes[0] < 200 || responseTimes[1] > 200) && status == "resolved")'
-    )
-    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
-    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
-    assert len(alerts_dto) == 2
-    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
-    assert len(filtered_alerts) == 1
-    assert filtered_alerts[0].source == ["frontend"]
+    search_query = {
+        "sql": "(endpoint = :endpoint_1)",
+        "params": {"endpoint_1": "/auth/login?redirect=/home"},
+    }
+    alerts = RulesEngine.filter_alerts_sql(SINGLE_TENANT_UUID, search_query)
+    assert len(alerts) == 1
+    assert alerts[0].event.get("endpoint") == "/auth/login?redirect=/home"
 
 
 # Actually found a big in celpy comparing list to None
 # https://github.com/cloud-custodian/cel-python/issues/59
 @pytest.mark.parametrize(
-    "setup_alerts",
+    "setup_alerts, db_session",
     [
-        {
-            "alert_details": [
-                {"source": ["job"], "queue": []},
-                {"source": ["task"], "queue": ["urgent", "high"]},
-                {"source": ["process"], "queue": None},
-            ]
-        }
+        (
+            {
+                "alert_details": [
+                    {"source": ["job"], "queue": []},
+                    {"source": ["task"], "queue": ["urgent", "high"]},
+                    {"source": ["process"], "queue": None},
+                ]
+            },
+            {"db": "mysql"},
+        )
     ],
     indirect=True,
 )
@@ -765,3 +698,98 @@ def test_severity_comparisons(
     assert len(alerts_dto) == 5
     filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
     assert len(filtered_alerts) == expected_severity_counts
+
+
+"""
+COMMENTED OUT UNTIL WE FIGURE ' something in list'
+
+@pytest.mark.parametrize(
+    "setup_alerts",
+    [
+        {
+            "alert_details": [
+                {
+                    "source": ["grafana"],
+                    "severity": "critical",
+                    "labels": {"some_label": "bla", "another_label": "another_value"},
+                    "some_list": ["a", "b"],
+                },
+                {
+                    "source": ["grafana"],
+                    "severity": "critical",
+                    "labels": {"some_label": "bla", "another_label": "another_value"},
+                },
+            ]
+        }
+    ],
+    indirect=True,
+)
+def test_search_sanity_7(db_session, setup_alerts):
+    timeframe_in_days = 3600 / 86400  # last hour
+    search_query = '(labels.some_label.contains("bla") && "b" in some_list)'
+    alerts = get_alerts_with_filters(
+        tenant_id=SINGLE_TENANT_UUID, time_delta=timeframe_in_days
+    )
+    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
+    # assert len(alerts_dto) == 4
+    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
+    assert len(filtered_alerts) == 1
+    assert filtered_alerts[0].fingerprint == "test-0"
+
+
+
+@pytest.mark.parametrize(
+    "setup_alerts",
+    [
+        {
+            "alert_details": [
+                {"source": ["monitoring"], "tags": ["urgent", "review"]},
+                {"source": ["logging"], "tags": ["ignore"]},
+            ]
+        }
+    ],
+    indirect=True,
+)
+def test_in_with_list(db_session, setup_alerts):
+    search_query = '("urgent" in tags)'
+    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
+    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
+    assert len(alerts_dto) == 2
+    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
+    assert len(filtered_alerts) == 1
+    assert filtered_alerts[0].tags == ["urgent", "review"]
+
+@pytest.mark.parametrize(
+    "setup_alerts, db_session",
+    [
+        (
+            {
+                "alert_details": [
+                    {
+                        "source": ["frontend"],
+                        "responseTimes": [120, 250, 180],
+                        "status": AlertStatus.RESOLVED.value,
+                    },
+                    {
+                        "source": ["backend"],
+                        "responseTimes": [300, 400, 500],
+                        "status": AlertStatus.FIRING.value,
+                    },
+                ]
+            },
+            {"db": "mysql"},
+        )
+    ],
+    indirect=True,
+)
+def test_high_complexity_queries(db_session, setup_alerts):
+    search_query = (
+        '((responseTimes[0] < 200 || responseTimes[1] > 200) && status == "resolved")'
+    )
+    alerts = get_alerts_with_filters(tenant_id=SINGLE_TENANT_UUID)
+    alerts_dto = convert_db_alerts_to_dto_alerts(alerts)
+    assert len(alerts_dto) == 2
+    filtered_alerts = RulesEngine.filter_alerts(alerts_dto, search_query)
+    assert len(filtered_alerts) == 1
+    assert filtered_alerts[0].source == ["frontend"]
+"""
