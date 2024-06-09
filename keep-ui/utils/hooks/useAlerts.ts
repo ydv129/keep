@@ -255,14 +255,17 @@ export const useAlerts = () => {
   };
 
   const usePresetAlerts = (
-    presetName: string,
+    presetName?: string, // Make presetName optional
     options: SWRConfiguration = { revalidateOnFocus: false }
   ) => {
     const apiUrl = getApiURL();
     const { data: session } = useSession();
 
+    // Return an empty array if presetName is undefined or an empty string
+    const shouldFetch = session && presetName && presetName.trim() !== '';
+
     return useSWR<AlertDto[]>(
-      () => (session ? `${apiUrl}/preset/${presetName}/alerts` : null),
+      () => shouldFetch ? `${apiUrl}/preset/${presetName}/alerts` : null,
       async (url) => {
         try {
           const response = await fetcher(url, session?.accessToken);
